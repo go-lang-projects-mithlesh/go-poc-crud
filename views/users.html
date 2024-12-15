@@ -1,0 +1,173 @@
+package main
+
+import (
+	"fmt"
+	"log"
+	"net/http"
+	"text/template"
+	"time"
+)
+
+// Define the User struct
+type User struct {
+	ID        int
+	FirstName string
+	LastName  string
+	Email     string
+}
+
+// Dummy in-memory user store (replace with a database in production)
+var users = []User{
+	{ID: 1, FirstName: "Mithlesh", LastName: "Kumar", Email: "ok@gmail.com"},
+	{ID: 2, FirstName: "Kumar", LastName: "Mithlesh", Email: "hi@gmail.com"},
+	{ID: 3, FirstName: "Plano", LastName: "TX", Email: "tx@gmail.com"},
+	{ID: 4, FirstName: "USA", LastName: "America", Email: "aa@gmail.com"},
+}
+
+var (
+	// Define a counter metric for HTTP requests
+	httpRequestCount = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "http_requests_total",
+			Help: "Total number of HTTP requests",
+		},
+		[]string{"method", "route", "status"},
+	)
+
+	// Define a histogram metric for request durations
+	httpDuration = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:    "http_duration_seconds",
+			Help:    "Histogram of HTTP request durations",
+			Buckets: prometheus.DefBuckets,
+		},
+		[]string{"method", "route"},
+	)
+)
+
+// Initialize the metrics
+func init() {
+	prometheus.MustRegister(httpRequestCount)
+	prometheus.MustRegister(httpDuration)
+}
+
+// Middleware to track HTTP requests
+func metricsMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Track the start time of the request
+		start := time.Now()
+
+		// Capture the HTTP status code
+		rec := &statusRecorder{ResponseWriter: w, statusCode: http.StatusOK}
+
+		// Call the next handler in the chain
+		next.ServeHTTP(rec, r)
+
+		// Measure the duration of the request and update the metrics
+		duration := time.Since(start).Seconds()
+		httpDuration.WithLabelValues(r.Method, r.URL.Path).Observe(duration)
+		httpRequestCount.WithLabelValues(r.Method, r.URL.Path, fmt.Sprintf("%d", rec.statusCode)).Inc()
+	})
+}
+
+// statusRecorder is a wrapper around the ResponseWriter to capture the status code
+type statusRecorder struct {
+	http.ResponseWriter
+	statusCode int
+}
+
+func (rec *statusRecorder) WriteHeader(statusCode int) {
+	rec.statusCode = statusCode
+	rec.ResponseWriter.WriteHeader(statusCode)
+}
+
+// GetUsers displays the list of all users
+func GetUsers(w http.ResponseWriter, r *http.Request) {
+	tmpl, err := template.ParseFiles("views/users.html")
+	if err != nil {
+		log.Println("Error parsing template:", err)
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
+	}
+
+	// Pass users slice to the template
+	err = tmpl.Execute(w, users)
+	if err != nil {
+		log.Println("Error executing template:", err)
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+	}
+}
+
+// CreateUser handles the form submission for creating a new user
+func CreateUser(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodPost {
+		// Retrieve form data
+		firstName := r.FormValue("first_name")
+		lastName := r.FormValue("last_name")
+		email := r.FormValue("email")
+
+		// Generate a new user ID (simple incremental ID for demo purposes)
+		newID := len(users) + 1
+
+		// Create and add the new user to the users slice
+		newUser := User{ID: newID, FirstName: firstName, LastName: lastName, Email: email}
+		users = append(users, newUser)
+
+		// Redirect to the /users route to see the updated list
+		http.Redirect(w, r, "/users", http.StatusSeeOther)
+	} else {
+		// If not POST, show an error
+		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+// ReadUser handles viewing a single user (just for demonstration)
+func ReadUser(w http.ResponseWriter, r *http.Request) {
+	// Extract the user ID from the URL
+	id := r.URL.Path[len("/users/"):]
+	fmt.Fprintf(w, "Reading user with ID: %s", id)
+}
+
+// UpdateUser handles the form submission for updating a user
+func UpdateUser(w http.ResponseWriter, r *http.Request) {
+	// Extract the user ID from the URL
+	id := r.URL.Path[len("/users/"):]
+	// For simplicity, we are not implementing the update logic here
+	fmt.Fprintf(w, "Update user with ID: %s", id)
+}
+
+// DeleteUser handles deleting a user
+func DeleteUser(w http.ResponseWriter, r *http.Request) {
+	// Extract the user ID from the URL
+	id := r.URL.Path[len("/users/"):]
+	// For simplicity, we are not implementing the delete logic here
+	fmt.Fprintf(w, "Delete user with ID: %s", id)
+}
+
+func main() {
+	// Serve the metrics endpoint
+	http.Handle("/metrics", promhttp.Handler())
+
+	// Serve the users page with the metrics middleware
+	http.Handle("/users", metricsMiddleware(http.HandlerFunc(GetUsers)))
+
+	// Handle user creation
+	http.HandleFunc("/users", CreateUser)
+
+	// Handle reading, updating, and deleting users (using dynamic routes)
+	http.HandleFunc("/users/", func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			ReadUser(w, r)
+		case http.MethodPost:
+			UpdateUser(w, r)
+		case http.MethodDelete:
+			DeleteUser(w, r)
+		default:
+			http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+		}
+	})
+
+	log.Println("Server running on http://localhost:7171")
+	log.Fatal(http.ListenAndServe(":7171", nil))
+}
