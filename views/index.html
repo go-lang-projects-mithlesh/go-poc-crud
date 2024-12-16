@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>User Management</title>
+</head>
+<body>
+    <h1>All Users</h1>
+    <table border="1">
+        <tr>
+            <th>ID</th>
+            <th>First Name</th>
+            <th>Last Name</th>
+            <th>Email</th>
+            <th>Action</th>
+        </tr>
+        {{range .}}
+        <tr>
+            <td>{{.ID}}</td>
+            <td>{{.FirstName}}</td>
+            <td>{{.LastName}}</td>
+            <td>{{.Email}}</td>
+            <td><button onclick="deleteUser({{.ID}})">Delete</button></td>
+        </tr>
+        {{end}}
+    </table>
+</body>
+<script>
+    function deleteUser(id) {
+        fetch(`/users/${id}`, { method: 'DELETE' })
+            .then(() => location.reload())
+            .catch(err => alert('Error: ' + err));
+    }
+</script>
+</html>
